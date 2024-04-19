@@ -315,7 +315,8 @@ build_gene_stats_table <- function(gene, data, category = c("tumour", "host", "h
     category <- match.arg(category)
     gene_data <- data[Symbol == gene]
     expression_data <- if (category == "tumour") {
-        gene_data[plot_category == "ctvt", .(mean_expression = mean(expression)), by = .(Tumour, Symbol)][, mean_expression]
+        gene_data[plot_category == "ctvt" | plot_category == "ht_and_ctvt",
+            .(mean_expression = mean(expression)), by = .(Tumour, Symbol)][, mean_expression]
     } else if (category == "host") {
         gene_data[plot_category == "host", .(mean_expression = mean(expression)), by = .(Tumour, Symbol)][, mean_expression]
     } else {
