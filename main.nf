@@ -1,4 +1,5 @@
 params.outdir = "out"
+params.include_pcr = false
 
 process ancestral_genotypes {
     input:
@@ -83,18 +84,34 @@ process allele_counting {
     publishDir "$params.outdir", mode: 'copy'
 
     script:
-    """
-    alco \
-      --bamfile ${alignment[0]} \
-      --locifile $variants \
-      -g 10000 \
-      > ${id}.allele_counts.tsv
-    annotate_germline_status.R \
-      --counts ${id}.allele_counts.tsv \
-      --variants $variants \
-      --output ${id}.allele_counts.tsv.gz
-    rm ${id}.allele_counts.tsv
-    """
+    if ( params.include_pcr)
+        """
+        alco \
+          --bamfile ${alignment[0]} \
+          --locifile $variants \
+          -g 10000 \
+          -F 2816 \
+          > ${id}.allele_counts.tsv
+        annotate_germline_status.R \
+          --counts ${id}.allele_counts.tsv \
+          --variants $variants \
+          --output ${id}.allele_counts.tsv.gz
+        rm ${id}.allele_counts.tsv
+        """
+    else
+        """
+        alco \
+          --bamfile ${alignment[0]} \
+          --locifile $variants \
+          -g 10000 \
+          -F 3840 \
+          > ${id}.allele_counts.tsv
+        annotate_germline_status.R \
+          --counts ${id}.allele_counts.tsv \
+          --variants $variants \
+          --output ${id}.allele_counts.tsv.gz
+        rm ${id}.allele_counts.tsv
+        """
 }
 
 process combine_counts {
@@ -156,53 +173,42 @@ process cram_to_bam {
 }
 
 
-process subread_counts_dup {
+process subread_counts {
     label 'subread'
 
     input:
     tuple val(id), path(bams), path(gtf)
 
     output:
-    path "subread_counts_dup.${id}.txt", emit: "counts"
-    path "subread_counts_dup.${id}.txt.summary", emit: "summary"
+    path "subread_counts.${id}.txt", emit: "counts"
+    path "subread_counts.${id}.txt.summary", emit: "summary"
 
     script:
-    """
-    featureCounts \
-      -a ${gtf} \
-      -F GTF \
-      -t exon \
-      --countReadPairs \
-      -p \
-      -o subread_counts_dup.${id}.txt \
-      -T ${task.cpus} \
-      ${bams[0]}
-    """
-}
-
-process subread_counts_nodup {
-    label 'subread'
-
-    input:
-    tuple val(id), path(bams), path(gtf)
-
-    output:
-    path "subread_counts_nodup.${id}.txt", emit: "counts"
-    path "subread_counts_nodup.${id}.txt.summary", emit: "summary"
-
-    script:
-    """
-    featureCounts \
-      -a ${gtf} \
-      -F GTF \
-      -t exon \
-      --ignoreDup \
-      --countReadPairs \
-      -p \
-      -o subread_counts_nodup.${id}.txt \
-      -T ${task.cpus} \
-      ${bams[0]}
-    """
+    if ( params.include_pcr)
+        """
+        featureCounts \
+          -a ${gtf} \
+          -F GTF \
+          -t exon \
+          --countReadPairs \
+          -p \
+          -o subread_counts.${id}.txt \
+          -T ${task.cpus} \
+          ${bams[0]}
+        """
+    else
+        """
+        featureCounts \
+          -a ${gtf} \
+          -F GTF \
+          -t exon \
+          --ignoreDup \
+          --countReadPairs \
+          -p \
+          -o subread_counts.${id}.txt \
+          -T ${task.cpus} \
+          ${bams[0]}
+        """
 }
 
 process compute_deseq_size_factors {
@@ -295,10 +301,10 @@ workflow {
     bam_inputs = remove_duplicate_filepair_keys(bam_csi_inputs, bam_bai_inputs)
     cram_inputs = Channel.fromFilePairs("${params.alignments}/*.cram{,.crai}")
     alignments = bam_inputs.concat(cram_inputs)
-    bam_alignments = alignments | cram_to_bam
     // END INPUT HANDLING
 
     //BEGIN WORKFLOW
+    bam_alignments = alignments | cram_to_bam
     gene_info = gene_information(gtf)
     ancestral_genotypes = ancestral_genotypes(ancestral_reconstruction)
     variants = extract_exome_variants(dataset, gtf)
@@ -308,25 +314,16 @@ workflow {
 
     // DESeq2 can compute size factors for us
     // but we need to generate fragment counts first using subread
-
-    // compute fragment counts with and without marked duplicates
-    fragment_counts_nodup = subread_counts_nodup(bam_alignments.combine(gtf))
-    fragment_counts_dup = subread_counts_dup(bam_alignments.combine(gtf))
+    fragment_counts = subread_counts(bam_alignments.combine(gtf))
 
     // Build a channel for each size factor computation
     frag_counts = 
-    fragment_counts_nodup.counts
-        .collect()
-        .map { tuple('nodup', it) }
-    .mix(
-        fragment_counts_dup.counts
+        fragment_counts.counts
             .collect()
-            .map { tuple('dup', it) }
-    ) 
+            .map { tuple('subread', it) }
     size_factors = compute_deseq_size_factors(frag_counts)
     base_table = make_base_table(dataset, combined, variants, ht_regions, ancestral_genotypes, ctvt_a)
 
-    size_factors.combine(base_table) | plot_expression
     // Plot expression
-    // base_table
+    size_factors.combine(base_table) | plot_expression
 } 
