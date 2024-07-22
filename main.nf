@@ -74,6 +74,24 @@ process extract_exome_variants {
     """
 }
 
+process restrict_exome_variants {
+    input:
+    path variants
+    path regions_file
+
+    output:
+    path "exome_variants_in_region.tsv.gz"
+
+    publishDir "$params.outdir", mode: 'copy'
+
+    script:
+    """
+    restrict_variants.R \
+      --variants $variants \
+      --regions $regions_file \
+      --output exome_variants_in_region.tsv.gz
+    """}
+
 process allele_counting {
     input:
     tuple val(id), path(alignment), path(variants) 
@@ -300,14 +318,15 @@ workflow {
     bam_csi_inputs   = Channel.fromFilePairs("${params.alignments}/*.bam{,.csi}")
     bam_inputs = remove_duplicate_filepair_keys(bam_csi_inputs, bam_bai_inputs)
     cram_inputs = Channel.fromFilePairs("${params.alignments}/*.cram{,.crai}")
-    alignments = bam_inputs.concat(cram_inputs)
+    cram_to_bam = cram_inputs | cram_to_bam
+    bam_alignments = bam_inputs.concat(cram_to_bam)
     // END INPUT HANDLING
 
     //BEGIN WORKFLOW
-    bam_alignments = alignments | cram_to_bam
     gene_info = gene_information(gtf)
     ancestral_genotypes = ancestral_genotypes(ancestral_reconstruction)
-    variants = extract_exome_variants(dataset, gtf)
+    all_variants = extract_exome_variants(dataset, gtf)
+    variants = restrict_exome_variants(all_variants, ht_regions)
     counts = bam_alignments.combine(variants) | allele_counting
     combined = counts.collect() | combine_counts
     size_factors = combined | compute_size_factors

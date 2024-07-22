@@ -71,10 +71,10 @@ sample_id <- function(x) {
 
 ctvt_a <- fread(args$ctvt_a, colClasses = c("sample_id" = "character"))
 regions <- fread(args$ht_regions, colClasses = c("CHROM" = "character"))
-counts <- fread(args$counts) %>%
+counts <- fread(args$counts, colClasses = c("CHROM" = "character")) %>%
     inner_join(regions, by = join_by(CHROM, POS >= START, POS <= END)) %>%
     mutate(sample_id = sample_id(samplename))
-variants <- fread(args$variants) %>%
+variants <- fread(args$variants, colClasses = c("CHROM" = "character")) %>%
     inner_join(regions, by = join_by(CHROM, POS >= START, POS <= END))
 ancestral <- fread(args$ancestral_states,
     colClasses = c("CHROM" = "character", "HT" = "character")) %>%
